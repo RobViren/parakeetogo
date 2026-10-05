@@ -1,6 +1,6 @@
 cmake_minimum_required(VERSION 3.24)
 # GCC shuffles and spills the ternary kernel accumulators on every step; clang keeps all 12 in registers.
-if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX})
+if(NOT DEFINED CMAKE_CXX_COMPILER AND NOT DEFINED ENV{CXX} AND NOT CMAKE_TOOLCHAIN_FILE)
   set(CMAKE_CXX_COMPILER clang++)
 endif()
 project(parakeetogo CXX)
