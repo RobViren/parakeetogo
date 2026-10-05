@@ -1,7 +1,9 @@
 #include <algorithm>
 #include <cstdio>
 #include <cstring>
-#if defined(__aarch64__)
+#if defined(__x86_64__)
+#include <cpuid.h>
+#elif defined(__aarch64__)
 #include <sys/auxv.h>
 #include <asm/hwcap.h>
 #endif
@@ -20,7 +22,10 @@ PK_DECL(vnni)
 PK_DECL(avx2)
 static const bool kVnni = [] {
   const char* e = std::getenv("PK_ISA");
-  return e ? !std::strcmp(e, "vnni") : bool(__builtin_cpu_supports("avxvnni"));
+  return e ? !std::strcmp(e, "vnni") : [] {
+    unsigned a, b, c, d;
+    return __get_cpuid_count(7, 1, &a, &b, &c, &d) && (a >> 4 & 1);  // AVX-VNNI; clang 18 lacks the builtin name
+  }();
 }();
 static const auto kGemm = kVnni ? vnni::Gemm : avx2::Gemm;
 static const auto kQuantRows = kVnni ? vnni::QuantRows : avx2::QuantRows;
