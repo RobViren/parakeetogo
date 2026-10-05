@@ -23,7 +23,9 @@ struct AlignedFree {
 };
 template <class T> using Buf = std::unique_ptr<T[], AlignedFree>;
 template <class T> Buf<T> Alloc(size_t n) {
-  return Buf<T>(static_cast<T*>(std::aligned_alloc(64, (n * sizeof(T) + 63) / 64 * 64)));
+  void* p = nullptr;
+  posix_memalign(&p, 64, (n * sizeof(T) + 63) / 64 * 64);
+  return Buf<T>(static_cast<T*>(p));
 }
 
 // Grow-only uninitialized storage reused across segments.
