@@ -1,4 +1,3 @@
-#include <pthread.h>
 #include <sched.h>
 
 #include <algorithm>
@@ -60,7 +59,7 @@ static void PinTo(int cpu) {
   cpu_set_t one;
   CPU_ZERO(&one);
   CPU_SET(cpu, &one);
-  pthread_setaffinity_np(pthread_self(), sizeof one, &one);
+  sched_setaffinity(0, sizeof one, &one);
 }
 
 const int Pool::kSpin = std::getenv("PK_SPIN") ? atoi(std::getenv("PK_SPIN")) : 3000;
