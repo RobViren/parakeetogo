@@ -6,12 +6,14 @@ namespace pk {
 constexpr int kGroup = 128;
 constexpr int kRows = 8;
 
-// Ternary linear packed for the int8 kernel. Rows go in blocks of 8 so one 32-byte vector holds 4 consecutive
+// Linear packed for the int8 kernel: redux's ternary weights, or dense f16 weights quantized to int8 per row and
+// 128-column group (dense, which the non-VNNI x86 kernel takes on a slower path that cannot saturate). Rows go in blocks of 8 so one 32-byte vector holds 4 consecutive
 // input columns for each of 8 output rows and a dot-product instruction lands one int32 per output row.
-// w: [G][out/8][32][8][4] in {-1,0,1}. init: [G][out/8][8] = -128 * sum of the group's weights, which cancels
+// w: [G][out/8][32][8][4]. init: [G][out/8][8] = -128 * sum of the group's weights, which cancels
 // the +128 offset on the unsigned activations. scale: [G][out/8][8].
 struct TernW {
   int out = 0, in = 0, G = 0;
+  bool dense = false;
   Buf<int8_t> w;
   Buf<int32_t> init;
   Buf<float> scale;
@@ -27,6 +29,7 @@ struct QAct {
 };
 
 TernW PackTern(const uint8_t* qweight, const uint16_t* scales_f16, int out, int in);
+TernW PackInt8(const uint16_t* weight_f16, int out, int in);  // weight [out][in]
 void Quantize(Pool& pool, const float* x, QAct& a);
 void QuantizeRows(const float* x, QAct& a, int t0, int t1);
 void TernGemm(Pool& pool, const TernW& w, const QAct& a, float* y);

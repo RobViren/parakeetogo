@@ -26,8 +26,8 @@ namespace pk::PK_NS {
                      first ? _mm256_mul_ps(v, sxb) : _mm256_fmadd_ps(v, sxb, _mm256_loadu_ps(y + r * 8))); \
   }
 
-#define PK_TILE(R)                                                                                       \
-  static void Tile##R(const int8_t* w, const int32_t* init, const float* scale, const uint8_t* x,        \
+#define PK_TILE(R, NAME)                                                                                 \
+  static void NAME##R(const int8_t* w, [[maybe_unused]] const int32_t* init, const float* scale, const uint8_t* x,        \
                       size_t xstride, const float* sx, size_t sxstride, float* y, size_t ystride, int T, \
                       bool first) {                                                                      \
     for (int t = 0; t < T; ++t, x += xstride, sx += sxstride, y += ystride) {                            \
@@ -41,14 +41,38 @@ namespace pk::PK_NS {
       PK_ROWS##R(PK_OUT)                                                                                 \
     }                                                                                                    \
   }
-PK_TILE(12)
-PK_TILE(4)
-PK_TILE(1)
+PK_TILE(12, Tile)
+PK_TILE(4, Tile)
+PK_TILE(1, Tile)
+
+#ifdef PK_VNNI
+#define PK_DENSE(R) Tile##R
+#else
+// Dense int8 weights overflow the 16-bit pair sums of maddubs against the unsigned codes. Signed codes (q - 128,
+// within +-127) times |w| stay under 32767, so each step widens to int32 and the +128 offset needs no init term.
+#undef PK_BEGIN
+#undef PK_STEP
+#undef PK_END
+#define PK_BEGIN(r) __m256i a##r = _mm256_setzero_si256();
+#define PK_STEP(r)                                                                                 \
+  {                                                                                                \
+    const __m256i wv = PK_WV(r), xs = _mm256_xor_si256(xb, _mm256_set1_epi8(char(0x80)));          \
+    a##r = _mm256_add_epi32(a##r, _mm256_madd_epi16(_mm256_maddubs_epi16(_mm256_abs_epi8(wv),      \
+                                                                         _mm256_sign_epi8(xs, wv)), \
+                                                    _mm256_set1_epi16(1)));                        \
+  }
+#define PK_END(r)
+PK_TILE(12, Dense)
+PK_TILE(4, Dense)
+PK_TILE(1, Dense)
+#define PK_DENSE(R) Dense##R
+#endif
 
 // Rows [rb, rb + R) of 8-row blocks, frames [t0, t1). R is 12, 4 or 1.
 void Gemm(const TernW& w, const QAct& a, float* y, int rb, int R, int t0, int t1) {
   const int RB = w.out / kRows;
-  const auto tile = R == 12 ? Tile12 : R == 4 ? Tile4 : Tile1;
+  const auto tile = !w.dense ? (R == 12 ? Tile12 : R == 4 ? Tile4 : Tile1)
+                              : (R == 12 ? PK_DENSE(12) : R == 4 ? PK_DENSE(4) : PK_DENSE(1));
   for (int g = 0; g < w.G; ++g) {
     const size_t o = size_t(g) * RB + rb;
     if (g + 1 < w.G)

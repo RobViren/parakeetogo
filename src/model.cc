@@ -21,9 +21,15 @@ Model::Model(const std::string& dir, int threads) : pool(threads) {
 
   pool.For(kLayers * kTerns, [&](int i) {
     const std::string name = "encoder.layers." + std::to_string(i / kTerns) + "." + kTernNames[i % kTerns];
-    const Tensor& q = st[name + ".qweight"];
-    const Tensor& s = st[name + ".scales"];
-    layers[i / kTerns].t[i % kTerns] = PackTern(q.data, s.f16(), q.shape[0], s.shape[1] * kGroup);
+    TernW& t = layers[i / kTerns].t[i % kTerns];
+    if (st.t.count(name + ".qweight")) {
+      const Tensor& q = st[name + ".qweight"];
+      const Tensor& s = st[name + ".scales"];
+      t = PackTern(q.data, s.f16(), q.shape[0], s.shape[1] * kGroup);
+    } else {
+      const Tensor& w = st[name + ".weight"];
+      t = PackInt8(w.f16(), w.shape[0], w.shape[1]);
+    }
   });
   for (int i = 0; i < kLayers; ++i) {
     Layer& L = layers[i];

@@ -1,4 +1,5 @@
 #include <algorithm>
+#include <cmath>
 #include <cstdio>
 #include <cstring>
 #if defined(__x86_64__)
@@ -41,35 +42,61 @@ const char* TernIsa() { return "neon+dotprod"; }
 #endif
 static const int kChunk = std::getenv("PK_CHUNK") ? atoi(std::getenv("PK_CHUNK")) : 48;
 
-TernW PackTern(const uint8_t* qweight, const uint16_t* scales_f16, int out, int in) {
+// Row i of the weights as int8 (row(i, dst) fills in values) with one scale per 128-column group.
+template <class Row>
+static TernW Lay(int out, int in, bool dense, Row&& row) {
   TernW p;
-  p.out = out, p.in = in, p.G = in / kGroup;
-  const int RB = out / kRows, nb = (in + 4) / 5;
+  p.out = out, p.in = in, p.G = in / kGroup, p.dense = dense;
+  const int RB = out / kRows;
   p.w = Alloc<int8_t>(size_t(out) * in);
   p.init = Alloc<int32_t>(size_t(p.G) * out);
   p.scale = Alloc<float>(size_t(p.G) * out);
+  std::vector<int8_t> values(in);
+  std::vector<float> scales(p.G);
+  for (int i = 0; i < out; ++i) {
+    row(i, values.data(), scales.data());
+    for (int g = 0; g < p.G; ++g) {
+      const size_t o = size_t(g) * RB + i / kRows;
+      int sum = 0;
+      for (int s = 0; s < 32; ++s) {
+        const int8_t* c = &values[g * kGroup + s * 4];
+        std::memcpy(p.w.get() + o * 1024 + s * 32 + (i % kRows) * 4, c, 4);
+        sum += c[0] + c[1] + c[2] + c[3];
+      }
+      p.init[o * 8 + i % kRows] = -128 * sum;
+      p.scale[o * 8 + i % kRows] = scales[g];
+    }
+  }
+  return p;
+}
+
+TernW PackTern(const uint8_t* qweight, const uint16_t* scales_f16, int out, int in) {
   static const auto lut = [] {
     std::vector<int8_t> l(256 * 5);
     for (int b = 0; b < 256; ++b)
       for (int i = 0, v = b; i < 5; ++i, v /= 3) l[b * 5 + i] = int8_t(v % 3 - 1);
     return l;
   }();
-  std::vector<int8_t> row(size_t(nb) * 5);
-  for (int i = 0; i < out; ++i) {
-    for (int b = 0; b < nb; ++b) std::memcpy(&row[b * 5], &lut[qweight[size_t(i) * nb + b] * 5], 5);
-    for (int g = 0; g < p.G; ++g) {
-      const size_t o = size_t(g) * RB + i / kRows;
-      int sum = 0;
-      for (int s = 0; s < 32; ++s) {
-        const int8_t* c = &row[g * kGroup + s * 4];
-        std::memcpy(p.w.get() + o * 1024 + s * 32 + (i % kRows) * 4, c, 4);
-        sum += c[0] + c[1] + c[2] + c[3];
-      }
-      p.init[o * 8 + i % kRows] = -128 * sum;
-      p.scale[o * 8 + i % kRows] = F16(scales_f16[size_t(i) * p.G + g]);
+  const int nb = (in + 4) / 5, G = in / kGroup;
+  std::vector<int8_t> unpacked(size_t(nb) * 5);
+  return Lay(out, in, false, [&](int i, int8_t* values, float* scales) {
+    for (int b = 0; b < nb; ++b) std::memcpy(&unpacked[b * 5], &lut[qweight[size_t(i) * nb + b] * 5], 5);
+    std::memcpy(values, unpacked.data(), in);
+    for (int g = 0; g < G; ++g) scales[g] = F16(scales_f16[size_t(i) * G + g]);
+  });
+}
+
+TernW PackInt8(const uint16_t* weight_f16, int out, int in) {
+  std::vector<float> w(in);
+  return Lay(out, in, true, [&](int i, int8_t* values, float* scales) {
+    for (int k = 0; k < in; ++k) w[k] = F16(weight_f16[size_t(i) * in + k]);
+    for (int g = 0; g < in / kGroup; ++g) {
+      float mx = 0;
+      for (int k = g * kGroup; k < (g + 1) * kGroup; ++k) mx = std::max(mx, std::fabs(w[k]));
+      scales[g] = mx > 0 ? mx / 127.f : 1.f;
+      for (int k = g * kGroup; k < (g + 1) * kGroup; ++k) values[k] = int8_t(std::lrint(w[k] / scales[g]));
     }
-  }
-  return p;
+  });
 }
 
 void QuantizeRows(const float* x, QAct& a, int t0, int t1) {
