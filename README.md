@@ -17,9 +17,11 @@ It runs about 2x faster than Photon, moondream's own runtime, on the same CPU. i
 
 Transcripts differ from Photon's by 0.23% of words, which is the noise between two int8 implementations of the same model. `ref/photon_run.py` is the Photon side of that comparison (it needs the `moondream` package); `tools/wer.py` scores two transcript files against each other.
 
+It also runs [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra), the same architecture with dense f16 linears, at the same speed. Those weights are quantized at load to int8 per output row and 128-column group, the grouping redux's scales use, so they run on the same int8 kernel and the same 0.6 GB. On 20 real clips (87 min) its transcripts differ from Photon's fp32 CPU run of ultra by 0.25% of words, against 0.22% between Photon's own CPU and GPU runs. Ultra mangles less jargon than redux, which differs from it by about 4.7%.
+
 ## Build
 
-Needs CMake 3.24+ and Clang (GCC builds but spills the ternary kernel's accumulators). On x86 the binary needs AVX2, FMA, F16C and BMI2 (Haswell or later), and uses AVX-VNNI when the CPU has it. Highway is fetched at configure time.
+Needs CMake 3.24+ and Clang (GCC builds but spills the ternary kernel's accumulators). On x86 the binary needs AVX2, FMA, F16C and BMI2 (Haswell or later), and uses AVX-VNNI when the CPU has it. Without VNNI, ultra's int8 layers take a widening path that cannot saturate, and run about 1.8x slower than redux. Highway is fetched at configure time.
 
 ```
 cmake -B build -G Ninja
@@ -53,6 +55,8 @@ They are unmodified copies of moondream's files, which the engine reads in place
 uvx --from huggingface_hub hf download moondream/parakeet-redux model.safetensors tokenizer.json --local-dir model
 ```
 
+For ultra, download `moondream/parakeet-ultra` the same way into another directory and pass it with `-m`. The engine tells the two apart by the tensors it finds.
+
 ## Use
 
 ```
@@ -69,7 +73,7 @@ ffmpeg -i talk.mp3 -ar 16000 -ac 1 -f s16le - | build/pk -
 
 ## How it works
 
-- `src/tern*`: the ternary GEMM, where two thirds of the time goes. The encoder's 604M ternary weights are unpacked at load to int8, and activations are quantized to int8 per frame and 128-column group, the same grouping the weight scales use. The inner step is one `vpdpbusd` per 8 output rows by 4 input columns, 12 accumulators deep, with tiles sized to keep weights in L1 across frames.
+- `src/tern*`: the ternary GEMM, where two thirds of the time goes. The encoder's 604M ternary weights are unpacked at load to int8 (ultra's are quantized to it), and activations are quantized to int8 per frame and 128-column group, the same grouping the weight scales use. The inner step is one `vpdpbusd` per 8 output rows by 4 input columns, 12 accumulators deep, with tiles sized to keep weights in L1 across frames.
 - `src/model.cc`, `src/dense.cc`: subsampler, encoder and VAD head. Relative position projections are cached per process, attention is blocked by head and query rows, and the ops that produce activations write their int8 codes in the same pass.
 - `src/decode.cc`: tokenizer, TDT greedy decode, and VAD segmentation so long audio is handled inside the engine.
 - `src/frontend.cc`: log-mel features.

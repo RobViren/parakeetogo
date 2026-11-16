@@ -29,6 +29,10 @@ Model::Model(const std::string& dir, int threads) : pool(threads) {
     } else {
       const Tensor& w = st[name + ".weight"];
       t = PackInt8(w.f16(), w.shape[0], w.shape[1]);
+      // The f16 source is twice the packed size; dropping each tensor's pages once packed keeps load peak RSS
+      // near the packed model instead of the two together.
+      const uintptr_t page = 4095, a = (uintptr_t(w.data) + page) & ~page, e = uintptr_t(w.data + w.n * 2) & ~page;
+      if (e > a) madvise(reinterpret_cast<void*>(a), e - a, MADV_DONTNEED);
     }
   });
   for (int i = 0; i < kLayers; ++i) {
