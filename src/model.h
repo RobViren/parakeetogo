@@ -101,6 +101,8 @@ struct Model {
   std::vector<int> Greedy(const float* encoded, int T);
   std::vector<std::pair<double, double>> BlockSpeech(const float* pcm, size_t n, const std::string& tag);
   std::vector<std::pair<long, long>> Segments(const float* pcm, size_t n);
+  struct Stream { long open = 0, keep = 0, need = 0; };
+  std::vector<std::pair<long, long>> Segments(const float* pcm, size_t n, Stream& s, bool final);
   std::string Detokenize(const std::vector<int>& steps);
   void Dump(const std::string& name, const void* data, char type, std::vector<int> shape);
 };

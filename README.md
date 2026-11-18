@@ -67,7 +67,7 @@ ffmpeg -i talk.mp3 -ar 16000 -ac 1 -f s16le - | build/pk -
 - Input is 16 kHz mono PCM16 wav, one transcript line per file. `-` reads raw s16le 16 kHz mono from stdin.
 - `-m dir` (model directory, default `model`), `-t threads` (default: the fast physical cores).
 - `--float` runs the ternary layers on unquantized activations, the parity oracle. `--dump dir` writes one .npy per stage.
-- `--serve` loads once and keeps the model resident: it prints `ready`, then answers each `<u32 sample count><float32 pcm>` request on stdin with one `{"text":"..."}` line on stdout.
+- `--serve` loads once and keeps the model resident: it prints `ready segments`, then answers each `<u32 sample count><float32 pcm>` request on stdin with one `{"text":"..."}` line on stdout. A request with the count's top bit set is `pk_segments` instead: it segments a recording still being captured, block by block, onto exactly the cuts a whole-recording transcribe would make, so a caller can transcribe a long recording while it streams and only the last block or two remain at the end.
 - `PK_TIME=1` prints per-stage timings to stderr. `PK_ISA=avx2` forces the non-VNNI kernel.
 
 `parakeetogo.h` is the C API (`pk_load`, `pk_transcribe`, `pk_free`); the CLI is a thin wrapper over `libpk.a`.

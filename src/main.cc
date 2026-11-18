@@ -56,14 +56,31 @@ static void Json(const char* text, FILE* out) {
   fflush(out);
 }
 
-// --serve keeps the model resident: after "ready", each request on stdin is <u32 sample count><float32 pcm>, and
-// each reply on stdout is one {"text":"..."} line.
+// --serve keeps the model resident: after "ready segments", each request on stdin is <u32 sample count><float32
+// pcm>, and each reply on stdout is one {"text":"..."} line. A count with the top bit set (bit 30: final) is a
+// pk_segments request, <u32 count><i64 open><i64 keep><i64 need><float32 pcm>, answered with
+// {"segments":[[a,b],...],"open":o,"keep":k,"need":m}.
 static void Serve(pk_model* model) {
-  puts("ready");
+  puts("ready segments");
   fflush(stdout);
   for (uint32_t n; fread(&n, 4, 1, stdin) == 1;) {
+    const bool segments = n >> 31, final = n >> 30 & 1;
+    n &= 0x3fffffff;
+    int64_t state64[3] = {};
+    if (segments && fread(state64, 8, 3, stdin) != 3) break;
     std::vector<float> pcm(n);
     if (fread(pcm.data(), 4, n, stdin) != n) break;
+    if (segments) {
+      long state[3] = {long(state64[0]), long(state64[1]), long(state64[2])};
+      size_t count;
+      long* cuts = pk_segments(model, pcm.data(), pcm.size(), state, final, &count);
+      fputs("{\"segments\":[", stdout);
+      for (size_t i = 0; i < count; ++i) printf("%s[%ld,%ld]", i ? "," : "", cuts[2 * i], cuts[2 * i + 1]);
+      printf("],\"open\":%ld,\"keep\":%ld,\"need\":%ld}\n", state[0], state[1], state[2]);
+      fflush(stdout);
+      free(cuts);
+      continue;
+    }
     char* text = pk_transcribe(model, pcm.data(), pcm.size());
     Json(text, stdout);
     free(text);

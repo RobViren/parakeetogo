@@ -241,20 +241,39 @@ static bool HasSpeech(const Spans& regions, double seconds) {
   return std::any_of(regions.begin(), regions.end(), [&](auto& r) { return r.second > 0 && r.first < seconds; });
 }
 
-// Sample ranges to transcribe. Audio up to 30 s is one segment and never reaches the VAD head.
+// Sample ranges to transcribe.
 std::vector<std::pair<long, long>> Model::Segments(const float* pcm, size_t n) {
+  Stream s;
+  return Segments(pcm, n, s, true);
+}
+
+// The VAD blocks of a recording fall at fixed offsets once the audio past them is known, so segmenting can resume
+// from the block holding the open segment and land on exactly the cuts of one pass over the whole recording. pcm
+// starts on a block boundary; s.open is where the open segment starts in it. Without final, blocks whose size still
+// depends on unseen audio wait: s.need is the length that lets another block in, s.keep the block boundary to
+// resume from (nothing before it is needed again). A whole recording up to 30 s is one segment and never reaches
+// the VAD head.
+std::vector<std::pair<long, long>> Model::Segments(const float* pcm, size_t n, Stream& s, bool final) {
   const long cap = long(kSegmentSeconds * kSampleRate), total = long(n);
-  if (total <= cap) return {{0, total}};
+  if (final && !s.open && !s.keep && total <= cap) {
+    s = {total, 0, 0};
+    return {{0, total}};
+  }
   std::vector<std::pair<long, long>> out;
   Spans regions;
-  long start = 0, read = 0;
+  long start = s.open, read = 0, keep = 0;
   for (int block_index = 0; read < total; ++block_index) {
     const long remaining = total - read;
+    if (!final && remaining < kBlockSamples + kMinTailSamples) break;
     const long block = remaining <= kBlockSamples ? remaining : std::min(kBlockSamples, remaining - kMinTailSamples);
-    const double offset = double(read - start) / kSampleRate;
-    char tag[16];
-    snprintf(tag, sizeof tag, "vad%03d", block_index);
-    for (auto [a, b] : BlockSpeech(pcm + read, block, tag)) regions.push_back({a + offset, b + offset});
+    if (read + block > start) {
+      const double offset = double(read - start) / kSampleRate;
+      char tag[16];
+      snprintf(tag, sizeof tag, "vad%03d", block_index);
+      for (auto [a, b] : BlockSpeech(pcm + read, block, tag))
+        if (b + offset > 0) regions.push_back({std::max(a + offset, 0.0), b + offset});
+    }
+    keep = read;
     read += block;
     while (read - start > cap) {
       const long cut = std::lrint(NextCut(Pauses(regions, double(read - start) / kSampleRate)) * kSampleRate);
@@ -267,7 +286,11 @@ std::vector<std::pair<long, long>> Model::Segments(const float* pcm, size_t n) {
       regions = rest;
     }
   }
-  if (read - start >= kMinSamples && HasSpeech(regions, double(read - start) / kSampleRate)) out.push_back({start, read});
+  if (final) {
+    if (read - start >= kMinSamples && HasSpeech(regions, double(read - start) / kSampleRate)) out.push_back({start, read});
+    start = read;
+  }
+  s = {start, keep, read + kBlockSamples + kMinTailSamples};
   return out;
 }
 
@@ -306,6 +329,16 @@ void pk_debug(pk_model* model, int float_path, const char* dump_dir) {
   m->float_path = float_path;
   m->dump_dir = dump_dir ? dump_dir : "";
   if (dump_dir) std::filesystem::create_directories(dump_dir);
+}
+
+long* pk_segments(pk_model* model, const float* pcm, size_t samples, long state[3], int final, size_t* count) {
+  pk::Model::Stream s{state[0], state[1], state[2]};
+  const auto segments = reinterpret_cast<pk::Model*>(model)->Segments(pcm, samples, s, final);
+  state[0] = s.open, state[1] = s.keep, state[2] = s.need;
+  long* out = static_cast<long*>(malloc(sizeof(long) * (2 * segments.size() + 1)));
+  for (size_t i = 0; i < segments.size(); ++i) out[2 * i] = segments[i].first, out[2 * i + 1] = segments[i].second;
+  *count = segments.size();
+  return out;
 }
 
 char* pk_transcribe(pk_model* model, const float* pcm, size_t samples) {
