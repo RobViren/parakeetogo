@@ -45,21 +45,48 @@ static std::vector<float> ReadWav(const std::string& path) {
   return {};
 }
 
+static void Json(const char* text, FILE* out) {
+  fputs("{\"text\":\"", out);
+  for (const char* c = text; *c; ++c) {
+    if (*c == '"' || *c == '\\') fputc('\\', out), fputc(*c, out);
+    else if (uint8_t(*c) < 0x20) fprintf(out, "\\u%04x", *c);
+    else fputc(*c, out);
+  }
+  fputs("\"}\n", out);
+  fflush(out);
+}
+
+// --serve keeps the model resident: after "ready", each request on stdin is <u32 sample count><float32 pcm>, and
+// each reply on stdout is one {"text":"..."} line.
+static void Serve(pk_model* model) {
+  puts("ready");
+  fflush(stdout);
+  for (uint32_t n; fread(&n, 4, 1, stdin) == 1;) {
+    std::vector<float> pcm(n);
+    if (fread(pcm.data(), 4, n, stdin) != n) break;
+    char* text = pk_transcribe(model, pcm.data(), pcm.size());
+    Json(text, stdout);
+    free(text);
+  }
+}
+
 int main(int argc, char** argv) {
   std::string model_dir = "model";
   std::vector<std::string> inputs;
   const char* dump = nullptr;
-  int threads = 0, float_path = 0;
+  int threads = 0, float_path = 0, serve = 0;
   for (int i = 1; i < argc; ++i) {
     const std::string a = argv[i];
     if (a == "-m" && i + 1 < argc) model_dir = argv[++i];
     else if (a == "-t" && i + 1 < argc) threads = atoi(argv[++i]);
     else if (a == "--dump" && i + 1 < argc) dump = argv[++i];
     else if (a == "--float") float_path = 1;
+    else if (a == "--serve") serve = 1;
     else inputs.push_back(a);
   }
-  if (inputs.empty()) Fail("usage: pk [-m model_dir] [-t threads] [--float] [--dump DIR] file.wav... | -\n16 kHz mono PCM16 wav, one transcript line per file; - reads raw s16le 16 kHz mono from stdin");
+  if (inputs.empty() && !serve) Fail("usage: pk [-m model_dir] [-t threads] [--float] [--dump DIR] file.wav... | - | --serve\n16 kHz mono PCM16 wav, one transcript line per file; - reads raw s16le 16 kHz mono from stdin");
   pk_model* model = pk_load(model_dir.c_str(), threads);
+  if (serve) Serve(model);
   if (float_path || dump) pk_debug(model, float_path, dump);
   for (const std::string& input : inputs) {
     std::vector<float> pcm;
