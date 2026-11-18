@@ -21,7 +21,7 @@ It also runs [moondream/parakeet-ultra](https://huggingface.co/moondream/parakee
 
 ## Build
 
-Needs CMake 3.24+ and Clang (GCC builds but spills the ternary kernel's accumulators). On x86 the binary needs AVX2, FMA, F16C and BMI2 (Haswell or later), and uses AVX-VNNI when the CPU has it. Without VNNI, ultra's int8 layers take a widening path that cannot saturate, and run about 1.8x slower than redux. Highway is fetched at configure time.
+Needs CMake 3.25+ and Clang (GCC builds but spills the ternary kernel's accumulators, about 1.25x slower). On x86 the binary needs AVX2, FMA, F16C and BMI2 (Haswell or later), and uses AVX-VNNI when the CPU has it. Without VNNI, ultra's int8 layers take a widening path that cannot saturate, and run about 1.8x slower than redux. Highway is fetched at configure time.
 
 ```
 cmake -B build -G Ninja
@@ -30,7 +30,13 @@ cmake --build build
 
 Options:
 - `-DPK_EMBED=ON` embeds the model and tokenizer from `PK_ASSET_DIR` (default `model/`), giving a single executable that needs no files.
-- `-DPK_STATIC=ON` links fully static, for a binary that runs on older glibc.
+- `-DPK_STATIC=ON` links the `pk` tool fully static, for a binary that runs on older glibc.
+- `-DPK_FETCH_ASSETS=OFF` skips the configure time download (see Weights). On by default only when parakeetogo is the top level project.
+- `-DPK_BUILD_CLI=OFF` builds only the library. On by default only when parakeetogo is the top level project.
+
+### From another CMake project
+
+`add_subdirectory` or `FetchContent` the repo and link `parakeetogo::parakeetogo` (`libpk.a`), whose public header is `parakeetogo.h`. As a subproject it leaves the compiler, global flags and link options alone, builds no tool and downloads nothing; the parent picks the compiler (use Clang) and passes the model directory to `pk_load`. The architecture flags (AVX2, FMA, F16C, BMI2 on x86) apply to the library's own sources only. Highway is fetched only if no `hwy` target exists yet, so it is shared with [kokoallovero](https://github.com/RobViren/kokoallovero), which pins Highway the same way: one static target per architecture (`HWY_COMPILE_ONLY_STATIC`), AVX2 on x86 and NEON on ARM.
 
 ## ARM
 
@@ -70,7 +76,7 @@ ffmpeg -i talk.mp3 -ar 16000 -ac 1 -f s16le - | build/pk -
 - `--serve` loads once and keeps the model resident: it prints `ready segments`, then answers each `<u32 sample count><float32 pcm>` request on stdin with one `{"text":"..."}` line on stdout. A request with the count's top bit set is `pk_segments` instead: it segments a recording still being captured, block by block, onto exactly the cuts a whole-recording transcribe would make, so a caller can transcribe a long recording while it streams and only the last block or two remain at the end.
 - `PK_TIME=1` prints per-stage timings to stderr. `PK_ISA=avx2` forces the non-VNNI kernel.
 
-`parakeetogo.h` is the C API (`pk_load`, `pk_transcribe`, `pk_free`); the CLI is a thin wrapper over `libpk.a`.
+`parakeetogo.h` is the C API (`pk_load`, `pk_transcribe`, `pk_free`); the CLI is a thin wrapper over `libpk.a` (CMake target `parakeetogo::parakeetogo`).
 
 ## How it works
 
