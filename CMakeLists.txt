@@ -16,7 +16,9 @@ option(PK_EMBED "Embed model.safetensors and tokenizer.json from PK_ASSET_DIR in
 option(PK_STATIC "Link the pk command line tool fully static" OFF)
 option(PK_FETCH_ASSETS "Download missing assets into PK_ASSET_DIR when configuring" ${PROJECT_IS_TOP_LEVEL})
 set(PK_ASSET_DIR ${PROJECT_SOURCE_DIR}/model CACHE PATH "Directory holding model.safetensors and tokenizer.json")
-set(PK_ASSET_URL https://huggingface.co/rodbiren/kokoro_parakeet_aio_models/resolve/766eb98b496915a437f38b1cec8e9458879cb2f3/parakeet CACHE STRING "")
+# Ultra is the default for quality: same speed as redux, but its dense weights mangle far less jargon. For the smaller
+# ternary redux, set this to https://huggingface.co/rodbiren/kokoro_parakeet_aio_models/resolve/766eb98b496915a437f38b1cec8e9458879cb2f3/parakeet
+set(PK_ASSET_URL https://huggingface.co/moondream/parakeet-ultra/resolve/73175eb7aeb0d82f1e2a6b53b3aabc10a90bcd0b CACHE STRING "")
 
 # Highway, shared with kokoallovero when both are in one tree: whichever project comes first fetches it, with the
 # same version and settings in both. Nothing here sets Highway's targets globally; each library fixes its own below,

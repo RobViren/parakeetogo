@@ -53,15 +53,15 @@ ARM speed is untuned: tile sizes and thread defaults were swept on Intel. The de
 
 ## Weights
 
-Configuring downloads `model.safetensors` and `tokenizer.json` into `model/` from [rodbiren/kokoro_parakeet_aio_models](https://huggingface.co/rodbiren/kokoro_parakeet_aio_models) if they are missing (`-DPK_FETCH_ASSETS=OFF` to skip, `-DPK_ASSET_URL=` to point elsewhere). Nothing is downloaded at runtime.
+Configuring downloads ultra's `model.safetensors` (1.2 GB) and `tokenizer.json` into `model/` from [moondream/parakeet-ultra](https://huggingface.co/moondream/parakeet-ultra) if they are missing (`-DPK_FETCH_ASSETS=OFF` to skip, `-DPK_ASSET_URL=` to point elsewhere). Nothing is downloaded at runtime.
 
-They are unmodified copies of moondream's files, which the engine reads in place with no conversion step. To take them from the source instead:
+Ultra is the default because of quality: it runs at the same speed as redux and mangles less jargon. Redux is the choice when size matters (178 MB on disk, and the smaller embedded binary). Its files are mirrored at [rodbiren/kokoro_parakeet_aio_models](https://huggingface.co/rodbiren/kokoro_parakeet_aio_models) under `parakeet/`; point `PK_ASSET_URL` there, or download from the source and pass the directory with `-m`:
 
 ```
-uvx --from huggingface_hub hf download moondream/parakeet-redux model.safetensors tokenizer.json --local-dir model
+uvx --from huggingface_hub hf download moondream/parakeet-redux model.safetensors tokenizer.json --local-dir model/redux
 ```
 
-For ultra, download `moondream/parakeet-ultra` the same way into another directory and pass it with `-m`. The engine tells the two apart by the tensors it finds.
+The engine reads moondream's files in place with no conversion step, and tells ultra and redux apart by the tensors it finds.
 
 ## Use
 
